@@ -85,7 +85,7 @@ double MINIMUM_RANGE = 0.1;
 
 template <typename PointT>
 void removeClosedPointCloud(const pcl::PointCloud<PointT> &cloud_in,
-                              pcl::PointCloud<PointT> &cloud_out, float thres)
+                              pcl::PointCloud<PointT> &cloud_out, float thres) //移除球体范围内距离太近的点
 {
     if (&cloud_in != &cloud_out)
     {
