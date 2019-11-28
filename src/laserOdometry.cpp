@@ -117,7 +117,7 @@ std::mutex mBuf;
 //当前点云中的点相对第一个点去除因匀速运动产生的畸变，效果相当于得到在点云扫描开始位置静止扫描得到的点云
 void TransformToStart(PointType const *const pi, PointType *const po)
 {
-
+    // odom 是上一帧的，上一帧的最后一个点的odom，也就是当前帧的第一个点的
     //插值系数计算，云中每个点的相对时间/点云周期10
     //interpolation ratio
     double s;
@@ -277,7 +277,7 @@ int main(int argc, char **argv)
 
 
             TicToc t_whole;
-            // initializing
+            // initializing , 第一帧不做处理
             if (!systemInited)
             {
                 systemInited = true;
