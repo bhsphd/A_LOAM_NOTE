@@ -34,6 +34,10 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
+/**************************************************
+有一个local map在local map上做匹配之类的，用来建图
+**************************************************/
+
 #include <math.h>
 #include <vector>
 #include <aloam_velodyne/common.h>
@@ -78,7 +82,7 @@ const int laserCloudWidth = 21;
 const int laserCloudHeight = 21;
 const int laserCloudDepth = 11;
 
-
+//点云方块集合最大数量
 const int laserCloudNum = laserCloudWidth * laserCloudHeight * laserCloudDepth; //4851
 
 
@@ -126,6 +130,7 @@ std::queue<sensor_msgs::PointCloud2ConstPtr> fullResBuf;
 std::queue<nav_msgs::Odometry::ConstPtr> odometryBuf;
 std::mutex mBuf;
 
+//创建VoxelGrid滤波器（体素栅格滤波器）
 pcl::VoxelGrid<PointType> downSizeFilterCorner;
 pcl::VoxelGrid<PointType> downSizeFilterSurf;
 
@@ -150,10 +155,10 @@ void transformUpdate()
 	q_wmap_wodom = q_w_curr * q_wodom_curr.inverse();
 	t_wmap_wodom = t_w_curr - q_wmap_wodom * t_wodom_curr;
 }
-
+// 点云转移到局部坐标下
 void pointAssociateToMap(PointType const *const pi, PointType *const po)
 {
-	Eigen::Vector3d point_curr(pi->x, pi->y, pi->z);
+    Eigen::Vector3d point_curr(pi->x, pi->y, pi->z);
 	Eigen::Vector3d point_w = q_w_curr * point_curr + t_w_curr;
 	po->x = point_w.x();
 	po->y = point_w.y();
@@ -298,6 +303,7 @@ void process()
 
 			while(!cornerLastBuf.empty())
 			{
+			    // 只清空角点是因为odom跟surf都是以角点为基准的
 				cornerLastBuf.pop();
 				printf("drop lidar frame in mapping for real time performance \n");
 			}
@@ -309,10 +315,15 @@ void process()
 			transformAssociateToMap();
 
 			TicToc t_shift;
+			// 下面计算的i , j , k索引是指当前收到的点云所在的cube的中心的位置
+            //立方体中点在世界坐标系下的（原点）位置
+            //过半取一（以50米进行四舍五入的效果），由于数组下标只能为正数，而地图可能建立在原点前后，因此
+            //每一维偏移一个laserCloudCenWidth（该值会动态调整，以使得数组利用最大化，初始值为该维数组长度1/2）的量
 			int centerCubeI = int((t_w_curr.x() + 25.0) / 50.0) + laserCloudCenWidth;
 			int centerCubeJ = int((t_w_curr.y() + 25.0) / 50.0) + laserCloudCenHeight;
 			int centerCubeK = int((t_w_curr.z() + 25.0) / 50.0) + laserCloudCenDepth;
 
+            //由于计算机求余是向零取整，为了不使（-50.0,50.0）求余后都向零偏移，当被求余数为负数时求余结果统一向左偏移一个单位，也即减一
 			if (t_w_curr.x() + 25.0 < 0)
 				centerCubeI--;
 			if (t_w_curr.y() + 25.0 < 0)
@@ -320,6 +331,8 @@ void process()
 			if (t_w_curr.z() + 25.0 < 0)
 				centerCubeK--;
 
+            //调整之后取值范围:3 < centerCubeI < 18， 3 < centerCubeJ < 8, 3 < centerCubeK < 18
+            //如果处于下边界，表明地图向负方向延伸的可能性比较大，则循环移位，将数组中心点向上边界调整一个单位
 			while (centerCubeI < 3)
 			{
 				for (int j = 0; j < laserCloudHeight; j++)
@@ -351,6 +364,7 @@ void process()
 				laserCloudCenWidth++;
 			}
 
+            //如果处于上边界，表明地图向正方向延伸的可能性比较大，则循环移位，将数组中心点向下边界调整一个单位
 			while (centerCubeI >= laserCloudWidth - 3)
 			{ 
 				for (int j = 0; j < laserCloudHeight; j++)
@@ -508,6 +522,8 @@ void process()
 
 			int laserCloudValidNum = 0;
 			int laserCloudSurroundNum = 0;
+            //在每一维附近5个cube(前2个，后2个，中间1个)里进行查找（前后250米范围内，总共500米范围），三个维度总共125个cube
+            //在这125个cube里面进一步筛选在视域范围内的cube
 
 			for (int i = centerCubeI - 2; i <= centerCubeI + 2; i++)
 			{
@@ -518,9 +534,11 @@ void process()
 						if (i >= 0 && i < laserCloudWidth &&
 							j >= 0 && j < laserCloudHeight &&
 							k >= 0 && k < laserCloudDepth)
-						{ 
+						{
+                            //记住视域范围内的cube索引，匹配用
 							laserCloudValidInd[laserCloudValidNum] = i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k;
 							laserCloudValidNum++;
+                            //记住附近所有cube的索引，显示用
 							laserCloudSurroundInd[laserCloudSurroundNum] = i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k;
 							laserCloudSurroundNum++;
 						}
@@ -530,8 +548,10 @@ void process()
 
 			laserCloudCornerFromMap->clear();
 			laserCloudSurfFromMap->clear();
+            //构建特征点地图，查找匹配使用
 			for (int i = 0; i < laserCloudValidNum; i++)
 			{
+                //map中提取的匹配使用的边沿点
 				*laserCloudCornerFromMap += *laserCloudCornerArray[laserCloudValidInd[i]];
 				*laserCloudSurfFromMap += *laserCloudSurfArray[laserCloudValidInd[i]];
 			}
@@ -579,9 +599,15 @@ void process()
 						pointOri = laserCloudCornerStack->points[i];
 						//double sqrtDis = pointOri.x * pointOri.x + pointOri.y * pointOri.y + pointOri.z * pointOri.z;
 						pointAssociateToMap(&pointOri, &pointSel);
-						kdtreeCornerFromMap->nearestKSearch(pointSel, 5, pointSearchInd, pointSearchSqDis); 
+						kdtreeCornerFromMap->nearestKSearch(pointSel, 5, pointSearchInd, pointSearchSqDis);
+						/***************************************
+						寻找最近的5个点，对点云协方差矩阵进行主成份分析：
+						 若这5个点分布在直线上，协方差矩阵的特征值包含一个元素显著大于其余两个，与该特征值相关的特征向量表示所处直线的方向;
+						 若这5个点分布在平面上，协方差矩阵的特征值存在一个显著小的元素，与该特征值相关的特征向量表示所处平面的法线方向。
+						 参考论文:2016,IROS,fast and robust 3d feature extraction from sparse point clouds
+						 ***************************************/
 
-						if (pointSearchSqDis[4] < 1.0)
+						if (pointSearchSqDis[4] < 1.0) //5个点中最大距离不超过1才处理
 						{ 
 							std::vector<Eigen::Vector3d> nearCorners;
 							Eigen::Vector3d center(0, 0, 0);
@@ -593,6 +619,7 @@ void process()
 								center = center + tmp;
 								nearCorners.push_back(tmp);
 							}
+							// 五个点的坐标的算术平均
 							center = center / 5.0;
 
 							Eigen::Matrix3d covMat = Eigen::Matrix3d::Zero();
@@ -734,8 +761,11 @@ void process()
 			transformUpdate();
 
 			TicToc t_add;
+            //将corner points按距离（比例尺缩小）归入相应的立方体
+            // 把当前时刻的点存入cube里，为下一次做准备
 			for (int i = 0; i < laserCloudCornerStackNum; i++)
 			{
+                //转移到世界坐标系
 				pointAssociateToMap(&laserCloudCornerStack->points[i], &pointSel);
 
 				int cubeI = int((pointSel.x + 25.0) / 50.0) + laserCloudCenWidth;
@@ -752,6 +782,8 @@ void process()
 				if (cubeI >= 0 && cubeI < laserCloudWidth &&
 					cubeJ >= 0 && cubeJ < laserCloudHeight &&
 					cubeK >= 0 && cubeK < laserCloudDepth)
+                    //只挑选-laserCloudCenWidth * 50.0 < point.x < laserCloudCenWidth * 50.0范围内的点，y和z同理
+                    //按照尺度放进不同的组，每个组的点数量各异
 				{
 					int cubeInd = cubeI + laserCloudWidth * cubeJ + laserCloudWidth * laserCloudHeight * cubeK;
 					laserCloudCornerArray[cubeInd]->push_back(pointSel);
