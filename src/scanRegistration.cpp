@@ -258,7 +258,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
     printf("points size %d \n", cloudSize);
     /*******************结束提取线段********************************/
 
-    pcl::PointCloud<PointType>::Ptr laserCloud(new pcl::PointCloud<PointType>());
+    pcl::PointCloud<PointType>::Ptr laserCloud(new pcl::PointCloud<PointType>()); // 按照每根线从小到大排序的点云
     for (int i = 0; i < N_SCANS; i++)
     { 
         scanStartInd[i] = laserCloud->size() + 5; // 可以纳入计算曲率的有效开始点，如scan[0]就是从第五个开始，符合论文所述
